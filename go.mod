@@ -1,10 +1,13 @@
 module seaRoute
 
-go 1.19
+go 1.23
+
+toolchain go1.23.9
 
 require (
 	github.com/gin-gonic/gin v1.8.2
 	github.com/kellydunn/golang-geo v0.7.0
+	github.com/mark3labs/mcp-go v0.29.0
 	github.com/pitchinnate/golangGeojsonDijkstra v0.0.1
 )
 

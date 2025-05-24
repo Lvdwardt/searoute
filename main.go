@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"context"
 	"github.com/gin-gonic/gin"
 	geo "github.com/kellydunn/golang-geo"
+	"github.com/mark3labs/mcp-go/mcp"
+	mcpServer "github.com/mark3labs/mcp-go/server"
 	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
 	"io"
 	"log"
@@ -13,6 +16,69 @@ import (
 )
 
 var PortData []Port
+
+// seaRouteTool defines the MCP tool for calculating sea routes.
+var seaRouteTool = mcp.NewTool("calculateSeaRoute",
+	mcp.WithDescription("Calculates the shortest sea route between two ports given their names or coordinates."),
+	mcp.WithString("origin_port_name", mcp.Description("Name of the origin port (optional if coordinates provided)."), mcp.Optional()),
+	mcp.WithString("destination_port_name", mcp.Description("Name of the destination port (optional if coordinates provided)."), mcp.Optional()),
+	mcp.WithNumber("origin_latitude", mcp.Description("Latitude of the origin port (optional if port name provided)."), mcp.Optional()),
+	mcp.WithNumber("origin_longitude", mcp.Description("Longitude of the origin port (optional if port name provided)."), mcp.Optional()),
+	mcp.WithNumber("destination_latitude", mcp.Description("Latitude of the destination port (optional if port name provided)."), mcp.Optional()),
+	mcp.WithNumber("destination_longitude", mcp.Description("Longitude of the destination port (optional if port name provided)."), mcp.Optional()),
+)
+
+// seaRouteToolHandler implements the logic for the calculateSeaRoute tool.
+func seaRouteToolHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var originCoords gdj.Position
+	var destinationCoords gdj.Position
+	var routeName string
+
+	originPortName, oPortNameOk := request.GetString("origin_port_name")
+	destPortName, dPortNameOk := request.GetString("destination_port_name")
+
+	originLat, oLatOk := request.GetFloat("origin_latitude")
+	originLon, oLonOk := request.GetFloat("origin_longitude")
+	destLat, dLatOk := request.GetFloat("destination_latitude")
+	destLon, dLonOk := request.GetFloat("destination_longitude")
+
+	if oPortNameOk && dPortNameOk && originPortName != "" && destPortName != "" {
+		log.Printf("Processing MCP request by port names: %s to %s", originPortName, destPortName)
+		oLon, oLat := getPortCoordinates(originPortName)
+		dLon, dLat := getPortCoordinates(destPortName)
+
+		if oLon == 0 && oLat == 0 {
+			return mcp.NewToolResultError(fmt.Sprintf("Origin port not found: %s", originPortName)), nil
+		}
+		if dLon == 0 && dLat == 0 {
+			return mcp.NewToolResultError(fmt.Sprintf("Destination port not found: %s", destPortName)), nil
+		}
+		originCoords = gdj.Position{oLon, oLat}
+		destinationCoords = gdj.Position{dLon, dLat}
+		routeName = originPortName + " to " + destPortName
+	} else if oLatOk && oLonOk && dLatOk && dLonOk {
+		log.Printf("Processing MCP request by coordinates: [%f,%f] to [%f,%f]", originLon, originLat, destLon, destLat)
+		originCoords = gdj.Position{originLon, originLat}
+		destinationCoords = gdj.Position{destLon, destLat}
+		routeName = fmt.Sprintf("[%f,%f] to [%f,%f]", originLon, originLat, destLon, destLat)
+	} else {
+		return mcp.NewToolResultError("Insufficient parameters. Provide origin/destination port names or full coordinates (latitude and longitude for both)."), nil
+	}
+
+	outputData, err := calculatePassageInfo(originCoords, destinationCoords, routeName)
+	if err != nil {
+		log.Printf("Error calculating passage info: %v", err)
+		return mcp.NewToolResultError(fmt.Sprintf("Error during route calculation: %v", err.Error())), nil
+	}
+
+	jsonBytes, err := json.Marshal(outputData)
+	if err != nil {
+		log.Printf("Error marshalling result: %v", err)
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to serialize route result: %v", err.Error())), nil
+	}
+
+	return mcp.NewToolResultText(string(jsonBytes)), nil
+}
 
 func main() {
 	skipNowTemp := false
@@ -51,6 +117,14 @@ func main() {
 	if err != nil {
 		log.Printf("Error loading port data: %v", err)
 	}
+
+	// Initialize MCP Server
+	mcpSrv := mcpServer.NewMCPServer(
+		"SeaRouteCalculator",
+		"1.0.0",
+		// mcpServer.WithToolCapabilities(false), // Example of an option
+	)
+	mcpSrv.AddTool(seaRouteTool, seaRouteToolHandler)
 
 	// Set the router as the default one provided by Gin
 	router := gin.Default()
@@ -136,6 +210,10 @@ func main() {
 
 	})
 
+	// Handle MCP request
+	// router.POST("/mcp", mcpHandler) // Old handler
+	router.POST("/mcp", gin.WrapH(mcpSrv.HTTPHandler())) // New MCP server handler
+
 	//Start and run the server if production environment
 	if os.Getenv("APP_ENV") == "prod" {
 		log.Println("Starting server in production environment")
@@ -159,7 +237,7 @@ func main() {
 }
 
 // CalculatePassageInfo calculates the ocean waypoints and distance between two coordinates and generates a GeoJSON output
-func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeName string) Output {
+func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeName string) (Output, error) {
 	// FC variable is the GeoJSON FeatureCollection
 	var fc gdj.FeatureCollection
 	var newFc gdj.FeatureCollection
@@ -171,7 +249,7 @@ func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeNam
 		log.Println("splitCoords.geojson does not exist. Reading original file.")
 		data, err = os.ReadFile("dataset/marnet_densified_v2.geojson")
 		if err != nil {
-			log.Fatal(err)
+			return Output{}, fmt.Errorf("error reading marnet_densified_v2.geojson: %w", err)
 		}
 	} else {
 		// If it does, read the splitCoords.geojson file
@@ -179,14 +257,15 @@ func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeNam
 		log.Println("splitCoords.geojson exists. Reading splitCoords.geojson file.")
 		data, err = os.ReadFile("dataset/splitCoords.geojson")
 		if err != nil {
-			log.Fatal(err)
+			return Output{}, fmt.Errorf("error reading splitCoords.geojson: %w", err)
 		}
 	}
 
 	//Unmarshall feature collection from geojson
-	err := json.Unmarshal(data, &fc)
+	var err error // Declare err here so it's in the correct scope for json.Unmarshal
+	err = json.Unmarshal(data, &fc)
 	if err != nil {
-		log.Fatal(err)
+		return Output{}, fmt.Errorf("error unmarshalling geojson data: %w", err)
 	}
 
 	//log.Println("Split file exists: ", splitAvailable)
@@ -201,6 +280,9 @@ func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeNam
 
 	// Calculate the shortest path between two points
 	path, distance, err := newFc.FindPath(originCoords, destinationCoords, 0.00001)
+	if err != nil {
+		return Output{}, fmt.Errorf("error finding path with golangGeojsonDijkstra: %w", err)
+	}
 
 	distanceInKm := distance / 1000
 
@@ -228,7 +310,7 @@ func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeNam
 	//	Generate output geojson
 	output := generateOutput(path, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, distanceInKm, routeName)
 
-	return output
+	return output, nil
 }
 
 // CalcDistance calculates the distance between two points in meters
@@ -260,3 +342,5 @@ func getPortCoordinates(portName string) (float64, float64) {
 	}
 	return 0, 0
 }
+
+// Old mcpHandler is removed.
