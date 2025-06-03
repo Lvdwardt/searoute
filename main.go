@@ -3,13 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	geo "github.com/kellydunn/golang-geo"
-	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
 	"io"
 	"log"
 	"os"
 	"strings"
+
+	"github.com/gin-gonic/gin"
+	geo "github.com/kellydunn/golang-geo"
+	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
 )
 
 var PortData []Port
@@ -24,14 +25,14 @@ func main() {
 
 	// Create a temp folder
 	if _, err := os.Stat("temp"); os.IsNotExist(err) {
-		err := os.MkdirAll("temp", 0777)
+		err := os.MkdirAll("temp", 0o777)
 		if err != nil {
 			return
 		}
 	}
 
 	// Setting the logger
-	f, err := os.OpenFile("temp/runtime.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	f, err := os.OpenFile("temp/runtime.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o666)
 	if err != nil {
 		log.Fatalf("error opening file: %v", err)
 	}
@@ -68,7 +69,6 @@ func main() {
 	// Setup route group for the API
 	// Handle the index route
 	router.GET("/", func(c *gin.Context) {
-
 		c.HTML(200, "home.gohtml", gin.H{})
 	})
 
@@ -89,7 +89,6 @@ func main() {
 
 	// Handle request to calculate the passage
 	router.POST("/waypoints", func(c *gin.Context) {
-
 		var form map[string]string
 		if err := c.Bind(&form); err != nil {
 			// Handle error
@@ -98,11 +97,6 @@ func main() {
 
 		log.Println(form)
 
-		//originLongi := form["originLongitude"]
-		//originLati := form["originLatitude"]
-		//destinationLongi := form["destinationLongitude"]
-		//destinationLati := form["destinationLatitude"]
-
 		fromPort := form["fromPort"]
 		toPort := form["toPort"]
 
@@ -110,12 +104,6 @@ func main() {
 		originLong, originLat := getPortCoordinates(fromPort)
 		// Get the destination coordinates
 		destinationLong, destinationLat := getPortCoordinates(toPort)
-
-		// Convert all the waypoints to float64
-		//originLong, _ := strconv.ParseFloat(originLong, 64)
-		//originLat, _ := strconv.ParseFloat(originLati, 64)
-		//destinationLong, _ := strconv.ParseFloat(destinationLongi, 64)
-		//destinationLat, _ := strconv.ParseFloat(destinationLati, 64)
 
 		// Print the coordinates received from form
 		log.Printf("Origin: %f, %f", originLong, originLat)
@@ -133,13 +121,18 @@ func main() {
 
 		// Send the data to the client
 		c.JSON(200, data)
-
 	})
 
-	//Start and run the server if production environment
+	// Start MCP server
+	StartMCPServer()
+
+	// Start and run the server if production environment
 	if os.Getenv("APP_ENV") == "prod" {
 		log.Println("Starting server in production environment")
 		err = router.RunTLS(fmt.Sprintf(":%s", os.Getenv("PORT")), os.Getenv("CERT_PATH"), os.Getenv("KEY_PATH"))
+		if err != nil {
+			log.Fatal(err)
+		}
 	} else {
 		log.Println("Starting server in development environment")
 		err = router.Run(fmt.Sprintf(":%s", os.Getenv("PORT")))
@@ -147,15 +140,6 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-
-	// Sample data for test Shanghai-New-York
-	//var originCoords = gdj.Position{72.9301, 19.0519}
-	//var destinationCoords = gdj.Position{-9.0905, 38.7062}
-	//var routeName = "Mumbai-Lisbon"
-
-	// Calculate the passage info
-	//calculatePassageInfo(originCoords, destinationCoords, routeName)
-
 }
 
 // CalculatePassageInfo calculates the ocean waypoints and distance between two coordinates and generates a GeoJSON output
@@ -183,13 +167,13 @@ func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeNam
 		}
 	}
 
-	//Unmarshall feature collection from geojson
+	// Unmarshall feature collection from geojson
 	err := json.Unmarshal(data, &fc)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	//log.Println("Split file exists: ", splitAvailable)
+	// log.Println("Split file exists: ", splitAvailable)
 	// Do not split if splitCoords.geojson exists
 	if !splitAvailable {
 		newFc = splitter(fc)

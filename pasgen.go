@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
 	"os"
+
+	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
 )
 
+// Feature struct to hold the GeoJSON feature data
 type Feature struct {
 	Type     string `json:"type"`
 	Geometry struct {
@@ -13,17 +15,18 @@ type Feature struct {
 		Coordinates gdj.Path `json:"coordinates"`
 	} `json:"geometry"`
 	Properties struct {
-		OCoords   gdj.Position `json:"o_coords"`
-		DCoords   gdj.Position `json:"d_coords"`
-		OToWpDist float64      `json:"o_to_wp_dist"`
-		WpToDDist float64      `json:"wp_to_d_dist"`
-		WpDist    float64      `json:"wp_dist"`
-		TotalDist float64      `json:"total_dist"`
+		OCoords   gdj.Position `json:"origin_port_coords"`
+		DCoords   gdj.Position `json:"destination_port_coords"`
+		OToWpDist float64      `json:"origin_port_to_nearest_common_wp_dist_in_km"`
+		WpToDDist float64      `json:"common_wp_to_destination_port_dist_in_km"`
+		WpDist    float64      `json:"waypoint_to_waypoint_dist_in_km"`
+		TotalDist float64      `json:"total_dist_from_origin_port_to_destination_port_in_km"`
 		RouteName string       `json:"route_name"`
 	} `json:"properties"`
 	ID string `json:"id"`
 }
 
+// Output struct to hold the final output in GeoJSON format
 type Output struct {
 	Type     string    `json:"type"`
 	Name     string    `json:"name"`
@@ -31,7 +34,6 @@ type Output struct {
 }
 
 func generateOutput(path gdj.Path, oCoords gdj.Position, dCoords gdj.Position, totalDistance float64, oToWpDist float64, wpToDDist float64, Wp2WpDist float64, routeName string) Output {
-
 	//	Add values to the output struct
 	var output Output
 	newFeature := Feature{
@@ -44,12 +46,12 @@ func generateOutput(path gdj.Path, oCoords gdj.Position, dCoords gdj.Position, t
 			Coordinates: path,
 		},
 		Properties: struct {
-			OCoords   gdj.Position `json:"o_coords"`
-			DCoords   gdj.Position `json:"d_coords"`
-			OToWpDist float64      `json:"o_to_wp_dist"`
-			WpToDDist float64      `json:"wp_to_d_dist"`
-			WpDist    float64      `json:"wp_dist"`
-			TotalDist float64      `json:"total_dist"`
+			OCoords   gdj.Position `json:"origin_port_coords"`
+			DCoords   gdj.Position `json:"destination_port_coords"`
+			OToWpDist float64      `json:"origin_port_to_nearest_common_wp_dist_in_km"`
+			WpToDDist float64      `json:"common_wp_to_destination_port_dist_in_km"`
+			WpDist    float64      `json:"waypoint_to_waypoint_dist_in_km"`
+			TotalDist float64      `json:"total_dist_from_origin_port_to_destination_port_in_km"`
 			RouteName string       `json:"route_name"`
 		}{
 			OCoords:   oCoords,

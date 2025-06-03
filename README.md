@@ -3,9 +3,11 @@
 This web application allows users to find waypoints along a sea route between an origin and a destination. The waypoints and the route are displayed on a map together with the total distance.
 
 ## Screenshot
-![](https://i.ibb.co/7K9jW90/Screenshot-2023-01-01-at-00-07-23.png)
+
+![Screenshot of Short Sea Route Finder web application](https://i.ibb.co/7K9jW90/Screenshot-2023-01-01-at-00-07-23.png)
 
 ## Prerequisites
+
 - [Go](https://go.dev/)
 - [Gin](https://gin-gonic.com/)
 - [Leaflet](https://leafletjs.com/)
@@ -31,13 +33,13 @@ Install the dependencies:
 go get github.com/gin-gonic/gin github.com/pitchinnate/golangGeojsonDijkstra github.com/kellydunn/golang-geo
 ```
 
-
 Start the server:
+
 ```go
 go run main.go
 ```
 
-Open your browser and navigate to http://localhost:8080 to use the application.
+Open your browser and navigate to <http://localhost:8080> to use the application.
 
 ## Usage
 
@@ -45,11 +47,31 @@ Open your browser and navigate to http://localhost:8080 to use the application.
 - Click the "Calculate" button to retrieve the waypoints and the route.
 - The waypoints, route details and the total distance will be displayed in the map on clicking the waypoint and route respectively.
 
+## MCP Server Configuration
+
+Add below configuration to your `config.json` file to set up the MCP server:
+
+```json
+{
+  "mcpServer": {
+    "my-short-sea-route-server": {
+        "command": "npx",
+        "args": ["-y", "mcp-remote", "http://localhost:8081/mcp"]
+    }
+  }
+}
+```
+
+Note: Replace `my-short-sea-route-server` with your desired server name and replace the URL with your MCP server URL if it's different.
+
 ## References
+
 Marnet Dataset from the [searoute](https://github.com/eurostat/searoute) project by eurostat.
 
 ## Contributing
+
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
 
 ## License
+
 This project is licensed under the MIT License - see the LICENSE file for details.
