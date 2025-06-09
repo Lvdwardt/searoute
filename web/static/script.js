@@ -59,6 +59,38 @@ function CleaCoordinates(lat,lng) {
     return message;
 }
 
+// Parse coordinates from string input
+function parseCoordinates(input) {
+    if (!input || typeof input !== 'string') return null;
+    
+    // Remove extra whitespace
+    input = input.trim();
+    
+    // Try to match various coordinate formats
+    // Format: "lat, lng" or "lat,lng"
+    let match = input.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+    if (match) {
+        return {
+            lat: parseFloat(match[1]),
+            lng: parseFloat(match[2])
+        };
+    }
+    
+    // Format: "latN/S, lngE/W" or "lat°N, lng°E"
+    match = input.match(/^(-?\d+\.?\d*)[°\s]*([NS])\s*,\s*(-?\d+\.?\d*)[°\s]*([EW])$/i);
+    if (match) {
+        let lat = parseFloat(match[1]);
+        let lng = parseFloat(match[3]);
+        
+        if (match[2].toUpperCase() === 'S') lat = -lat;
+        if (match[4].toUpperCase() === 'W') lng = -lng;
+        
+        return { lat, lng };
+    }
+    
+    return null;
+}
+
 
 const map = L.map("map", {
     preferCanvas: true, // Improve performance on mobile devices and older browsers
@@ -549,124 +581,149 @@ form.addEventListener('submit', function(event) {
     if (!this.checkValidity()) {
         event.preventDefault();
     } else {
-            event.preventDefault();
+        event.preventDefault();
 
-            // Get the values of the input fields
-            const fromPortElement = document.getElementById('from-input');
-            const toPortElement = document.getElementById('to-input');
-            const fromPort = fromPortElement.value;
-            const toPort = toPortElement.value;
+        // Get the values of the input fields
+        const fromPortElement = document.getElementById('from-input');
+        const toPortElement = document.getElementById('to-input');
+        const fromInput = fromPortElement.value.trim();
+        const toInput = toPortElement.value.trim();
 
-            // // Do something with the values (e.g. pass them to your backend or API)
-            // console.log('From: ' + fromPort);
-            // console.log('To: ' + toPort);
+        // Check that the input fields are not empty
+        if (fromInput === '' || toInput === '') {
+            notie.alert({
+                type: 'error',
+                text: 'Please enter "From" and "To" locations.',
+                time: 3
+            });
+            return;
+        }
 
-            // Check that the input fields are not empty
-            if (fromPort.trim() === '' || toPort.trim() === '') {
-                notie.alert({
-                    type: 'error',
-                    text: 'Please enter "From" and "To" ports.',
-                    time: 3
-                });
-                return;
-            }
+        // Try to parse coordinates from input
+        const fromCoords = parseCoordinates(fromInput);
+        const toCoords = parseCoordinates(toInput);
 
-            // Get the values of the form fields
-            // const originLatInput = document.getElementById("origin-lat");
-            // const originLngInput = document.getElementById("origin-lng");
-            // const destLatInput = document.getElementById("dest-lat");
-            // const destLngInput = document.getElementById("dest-lng");
+        const formData = {};
+        
+        if (fromCoords) {
+            // From input is coordinates
+            formData.originLatitude = fromCoords.lat.toString();
+            formData.originLongitude = fromCoords.lng.toString();
+            formData.fromPort = `${fromCoords.lat}, ${fromCoords.lng}`;
+        } else {
+            // From input is port name
+            formData.fromPort = fromInput;
+        }
+        
+        if (toCoords) {
+            // To input is coordinates
+            formData.destinationLatitude = toCoords.lat.toString();
+            formData.destinationLongitude = toCoords.lng.toString();
+            formData.toPort = `${toCoords.lat}, ${toCoords.lng}`;
+        } else {
+            // To input is port name
+            formData.toPort = toInput;
+        }
 
-            const formData = {};
-            // formData.originLatitude = originLatInput.value;
-            // formData.originLongitude = originLngInput.value;
-            // formData.destinationLatitude = destLatInput.value;
-            // formData.destinationLongitude = destLngInput.value;
-            formData.fromPort = fromPort;
-            formData.toPort = toPort;
+        // Send a request to the Go server with the form data
+        fetch("/waypoints", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(formData)
+        })
+            .then((response) => response.json())
+            .then((data) => {
+                // Do something with the response data
+                console.log(data);
 
-            // Send a request to the Go server with the form data
-            fetch("/waypoints", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(formData)
-            })
-                .then((response) => response.json())
-                .then((data) => {
-                    // Do something with the response data
-                    console.log(data);
-
-                    // Remove the previous waypoints from the map, if any
-                    if (previousWaypoints) {
-                        previousWaypoints.forEach(function(waypoint) {
-                            map.removeLayer(waypoint);
-                        });
-                    }
-
-                    // To remove the layer, you can use the following code
-                    map.eachLayer(function(layer) {
-                        if (layer.options && layer.options.id === 'routeLayer') {
-                            map.removeLayer(layer);
-                        }
+                // Remove the previous waypoints from the map, if any
+                if (previousWaypoints) {
+                    previousWaypoints.forEach(function(waypoint) {
+                        map.removeLayer(waypoint);
                     });
+                }
 
-                    // Add the feature collection as a layer to the map
-                    var routeLayer = L.geoJSON(data, {
-                        id: 'routeLayer',
-                        style: function(feature) {
-                            return {
-                                color: 'red'
-                            };
-                        },
-                        onEachFeature: function(feature, layer) {
-                            var properties = feature.properties;
-                            let routeName = properties.route_name;
-                            let distance = properties.total_dist;
-                            let distanceRounded = distance.toFixed(2);
-                            let distanceInNauticalMiles = (distance * 0.539957).toFixed(2);
-                            layer.bindPopup(routeName +
-                                '<br>Total Distance: ' + distanceRounded + ' km / '+ distanceInNauticalMiles + ' nm'
-                            );
-                        }
+                // To remove the layer, you can use the following code
+                map.eachLayer(function(layer) {
+                    if (layer.options && layer.options.id === 'routeLayer') {
+                        map.removeLayer(layer);
+                    }
+                });
+
+                // Add the feature collection as a layer to the map
+                var routeLayer = L.geoJSON(data, {
+                    id: 'routeLayer',
+                    style: function(feature) {
+                        return {
+                            color: 'red'
+                        };
+                    },
+                    onEachFeature: function(feature, layer) {
+                        var properties = feature.properties;
+                        let routeName = properties.route_name;
+                        let distance = properties.total_dist;
+                        let distanceRounded = distance.toFixed(2);
+                        let distanceInNauticalMiles = (distance * 0.539957).toFixed(2);
+                        layer.bindPopup(routeName +
+                            '<br>Total Distance: ' + distanceRounded + ' km / '+ distanceInNauticalMiles + ' nm'
+                        );
+                    }
+                }).addTo(map);
+
+                let waypoints = data.features[0].geometry.coordinates;
+                let waypointIcon = L.icon({
+                    iconUrl: './static/icons/waypoint.png',
+                    iconSize: [8, 8]
+                });
+
+                let newWaypoints = [];
+                waypoints.forEach(function(waypoint) {
+                    let marker = L.marker([waypoint[1], waypoint[0]], {
+                        icon: waypointIcon
                     }).addTo(map);
 
-                    let waypoints = data.features[0].geometry.coordinates;
-                    // console.log(waypoints);
-                    let waypointIcon = L.icon({
-                        iconUrl: './static/icons/waypoint.png',
-                        iconSize: [8, 8]
-                    });
+                    // Create a popup with the coordinates
+                    let coords = CleaCoordinates(waypoint[1], waypoint[0]);
+                    marker.bindPopup(coords);
 
-                    let newWaypoints = [];
-                    waypoints.forEach(function(waypoint) {
-                        let marker = L.marker([waypoint[1], waypoint[0]], {
-                            icon: waypointIcon
-                        }).addTo(map);
-
-                        // Create a popup with the coordinates
-                        let coords = CleaCoordinates(waypoint[1], waypoint[0]);
-                        marker.bindPopup(coords);
-
-                        newWaypoints.push(marker);
-                    });
-
-                    // Store the new waypoints in the previousWaypoints variable
-                    previousWaypoints = newWaypoints;
-
-                    currentGeoJsonData = data;
-                    fileName = `${fromPort}-${toPort}.geojson`;
-
-                    // Fit the map to the layer bounds
-                    map.fitBounds(routeLayer.getBounds());
-
-                    // Enable the download button
-                    document.getElementById('download-button').removeAttribute("disabled");
-                    // Enable the clear button
-                    document.getElementById('clear-button').removeAttribute("disabled");
+                    newWaypoints.push(marker);
                 });
-        }
+
+                // Store the new waypoints in the previousWaypoints variable
+                previousWaypoints = newWaypoints;
+
+                currentGeoJsonData = data;
+                
+                // Create filename based on input type
+                if (fromCoords && toCoords) {
+                    fileName = `route-${fromCoords.lat}_${fromCoords.lng}-to-${toCoords.lat}_${toCoords.lng}.geojson`;
+                } else if (fromCoords) {
+                    fileName = `${fromCoords.lat}_${fromCoords.lng}-to-${toInput}.geojson`;
+                } else if (toCoords) {
+                    fileName = `${fromInput}-to-${toCoords.lat}_${toCoords.lng}.geojson`;
+                } else {
+                    fileName = `${fromInput}-${toInput}.geojson`;
+                }
+
+                // Fit the map to the layer bounds
+                map.fitBounds(routeLayer.getBounds());
+
+                // Enable the download button
+                document.getElementById('download-button').removeAttribute("disabled");
+                // Enable the clear button
+                document.getElementById('clear-button').removeAttribute("disabled");
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+                notie.alert({
+                    type: 'error',
+                    text: 'Error calculating route. Please check your inputs.',
+                    time: 5
+                });
+            });
+    }
 });
 
 const fromPortElement = document.getElementById('from-input');
@@ -678,32 +735,47 @@ toPortElement.addEventListener('input', validateInput);
 
 function validateInput() {
     // Get the values of the input fields
-    const fromPort = fromPortElement.value;
-    const toPort = toPortElement.value;
+    const fromPort = fromPortElement.value.trim();
+    const toPort = toPortElement.value.trim();
 
     // Check that the input fields are not empty
-    if (fromPort.trim() === '' || toPort.trim() === '') {
+    if (fromPort === '' || toPort === '') {
         // Add error styles to input fields
         if (fromPort === '') {
-            fromPortElement.setCustomValidity('Please enter a valid "From" port');
+            fromPortElement.setCustomValidity('Please enter a valid "From" location (port name or coordinates)');
             fromPortElement.classList.add('is-invalid');
         } else {
             fromPortElement.setCustomValidity('');
             fromPortElement.classList.remove('is-invalid');
         }
         if (toPort === '') {
-            toPortElement.setCustomValidity('Please enter a valid "To" port');
+            toPortElement.setCustomValidity('Please enter a valid "To" location (port name or coordinates)');
             toPortElement.classList.add('is-invalid');
         } else {
             toPortElement.setCustomValidity('');
             toPortElement.classList.remove('is-invalid');
         }
     } else {
-        // Remove error styles from input fields
-        fromPortElement.setCustomValidity('');
-        fromPortElement.classList.remove('is-invalid');
-        toPortElement.setCustomValidity('');
-        toPortElement.classList.remove('is-invalid');
+        // Validate coordinate format if it looks like coordinates
+        const fromCoords = parseCoordinates(fromPort);
+        const toCoords = parseCoordinates(toPort);
+        
+        // Check if coordinates are valid (if they were parsed as coordinates)
+        if (fromCoords && (Math.abs(fromCoords.lat) > 90 || Math.abs(fromCoords.lng) > 180)) {
+            fromPortElement.setCustomValidity('Invalid coordinates. Latitude must be between -90 and 90, longitude between -180 and 180');
+            fromPortElement.classList.add('is-invalid');
+        } else {
+            fromPortElement.setCustomValidity('');
+            fromPortElement.classList.remove('is-invalid');
+        }
+        
+        if (toCoords && (Math.abs(toCoords.lat) > 90 || Math.abs(toCoords.lng) > 180)) {
+            toPortElement.setCustomValidity('Invalid coordinates. Latitude must be between -90 and 90, longitude between -180 and 180');
+            toPortElement.classList.add('is-invalid');
+        } else {
+            toPortElement.setCustomValidity('');
+            toPortElement.classList.remove('is-invalid');
+        }
     }
 }
 

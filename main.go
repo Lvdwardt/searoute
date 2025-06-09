@@ -3,13 +3,15 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	geo "github.com/kellydunn/golang-geo"
-	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
 	"io"
 	"log"
 	"os"
+	"strconv"
 	"strings"
+
+	"github.com/gin-gonic/gin"
+	geo "github.com/kellydunn/golang-geo"
+	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
 )
 
 var PortData []Port
@@ -89,51 +91,115 @@ func main() {
 
 	// Handle request to calculate the passage
 	router.POST("/waypoints", func(c *gin.Context) {
-
 		var form map[string]string
 		if err := c.Bind(&form); err != nil {
-			// Handle error
 			log.Println(err)
 		}
 
-		log.Println(form)
+		log.Println("Received form data:", form)
 
-		//originLongi := form["originLongitude"]
-		//originLati := form["originLatitude"]
-		//destinationLongi := form["destinationLongitude"]
-		//destinationLati := form["destinationLatitude"]
+		// Try to get coordinates directly from the form
+		originLongStr := form["originLongitude"]
+		originLatStr := form["originLatitude"]
+		destinationLongStr := form["destinationLongitude"]
+		destinationLatStr := form["destinationLatitude"]
+
+		log.Printf("Debug - originLongStr: '%s', originLatStr: '%s'", originLongStr, originLatStr)
+		log.Printf("Debug - destinationLongStr: '%s', destinationLatStr: '%s'", destinationLongStr, destinationLatStr)
+
+		var originLong, originLat, destinationLong, destinationLat float64
+		var hasOriginCoords, hasDestCoords bool
+
+		log.Printf("About to handle origin coordinates...")
+		// Handle origin coordinates
+		if originLongStr != "" && originLatStr != "" {
+			log.Printf("Found origin coordinate strings, attempting to parse...")
+			var err1, err2 error
+			originLong, err1 = strconv.ParseFloat(originLongStr, 64)
+			originLat, err2 = strconv.ParseFloat(originLatStr, 64)
+			if err1 != nil || err2 != nil {
+				log.Printf("Error parsing origin coordinates: %v, %v", err1, err2)
+				// Try to parse from fromPort as coordinates
+				originLong, originLat = parseCoordinatesFromString(form["fromPort"])
+				hasOriginCoords = (originLong != 0 || originLat != 0)
+				if !hasOriginCoords {
+					// Final fallback to port lookup
+					originLong, originLat = getPortCoordinates(form["fromPort"])
+					hasOriginCoords = (originLong != 0 || originLat != 0)
+				}
+			} else {
+				hasOriginCoords = true
+				log.Printf("Successfully parsed origin coordinates: %f, %f", originLong, originLat)
+			}
+		} else {
+			log.Printf("No origin coordinate strings found, trying to parse fromPort as coordinates...")
+			// Try to parse fromPort as coordinates first
+			originLong, originLat = parseCoordinatesFromString(form["fromPort"])
+			hasOriginCoords = (originLong != 0 || originLat != 0)
+			if !hasOriginCoords {
+				// Fallback to port lookup for origin
+				originLong, originLat = getPortCoordinates(form["fromPort"])
+				hasOriginCoords = (originLong != 0 || originLat != 0)
+			}
+		}
+
+		// Handle destination coordinates
+		if destinationLongStr != "" && destinationLatStr != "" {
+			var err3, err4 error
+			destinationLong, err3 = strconv.ParseFloat(destinationLongStr, 64)
+			destinationLat, err4 = strconv.ParseFloat(destinationLatStr, 64)
+			if err3 != nil || err4 != nil {
+				log.Printf("Error parsing destination coordinates: %v, %v", err3, err4)
+				// Try to parse from toPort as coordinates
+				destinationLong, destinationLat = parseCoordinatesFromString(form["toPort"])
+				hasDestCoords = (destinationLong != 0 || destinationLat != 0)
+				if !hasDestCoords {
+					// Final fallback to port lookup
+					destinationLong, destinationLat = getPortCoordinates(form["toPort"])
+					hasDestCoords = (destinationLong != 0 || destinationLat != 0)
+				}
+			} else {
+				hasDestCoords = true
+				log.Printf("Successfully parsed destination coordinates: %f, %f", destinationLong, destinationLat)
+			}
+		} else {
+			// Try to parse toPort as coordinates first
+			destinationLong, destinationLat = parseCoordinatesFromString(form["toPort"])
+			hasDestCoords = (destinationLong != 0 || destinationLat != 0)
+			if !hasDestCoords {
+				// Fallback to port lookup for destination
+				destinationLong, destinationLat = getPortCoordinates(form["toPort"])
+				hasDestCoords = (destinationLong != 0 || destinationLat != 0)
+			}
+		}
 
 		fromPort := form["fromPort"]
 		toPort := form["toPort"]
 
-		// Get the origin coordinates
-		originLong, originLat := getPortCoordinates(fromPort)
-		// Get the destination coordinates
-		destinationLong, destinationLat := getPortCoordinates(toPort)
+		log.Printf("Final Origin: %f, %f (hasCoords: %v)", originLong, originLat, hasOriginCoords)
+		log.Printf("Final Destination: %f, %f (hasCoords: %v)", destinationLong, destinationLat, hasDestCoords)
 
-		// Convert all the waypoints to float64
-		//originLong, _ := strconv.ParseFloat(originLong, 64)
-		//originLat, _ := strconv.ParseFloat(originLati, 64)
-		//destinationLong, _ := strconv.ParseFloat(destinationLongi, 64)
-		//destinationLat, _ := strconv.ParseFloat(destinationLati, 64)
+		// Validate coordinates - check if we have valid coordinates
+		if !hasOriginCoords {
+			c.JSON(400, gin.H{"error": "Invalid origin location"})
+			return
+		}
+		if !hasDestCoords {
+			c.JSON(400, gin.H{"error": "Invalid destination location"})
+			return
+		}
 
-		// Print the coordinates received from form
-		log.Printf("Origin: %f, %f", originLong, originLat)
-		log.Printf("Destination: %f, %f", destinationLong, destinationLat)
-
-		// Get the origin coordinates
 		originCoords := gdj.Position{originLong, originLat}
-		// Get the destination coordinates
 		destinationCoords := gdj.Position{destinationLong, destinationLat}
-		// Set route name
-		routeName := fmt.Sprintf("%s -> %s", fromPort, toPort)
+		var routeName string
+		if fromPort != "" && toPort != "" {
+			routeName = fmt.Sprintf("%s -> %s", fromPort, toPort)
+		} else {
+			routeName = "Custom Coordinates"
+		}
 
-		// Call the function to calculate the passage
 		data := calculatePassageInfo(originCoords, destinationCoords, routeName)
-
-		// Send the data to the client
 		c.JSON(200, data)
-
 	})
 
 	//Start and run the server if production environment
@@ -258,5 +324,36 @@ func getPortCoordinates(portName string) (float64, float64) {
 			return port.Longitude, port.Latitude
 		}
 	}
+	return 0, 0
+}
+
+// parseCoordinatesFromString attempts to parse coordinates from a string like "lat, lng"
+func parseCoordinatesFromString(input string) (float64, float64) {
+	if input == "" {
+		return 0, 0
+	}
+
+	// Remove extra whitespace
+	input = strings.TrimSpace(input)
+
+	// Try to match format: "lat, lng" or "lat,lng"
+	parts := strings.Split(input, ",")
+	if len(parts) == 2 {
+		latStr := strings.TrimSpace(parts[0])
+		lngStr := strings.TrimSpace(parts[1])
+
+		lat, err1 := strconv.ParseFloat(latStr, 64)
+		lng, err2 := strconv.ParseFloat(lngStr, 64)
+
+		if err1 == nil && err2 == nil {
+			// Validate coordinate ranges
+			if lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 {
+				log.Printf("Successfully parsed coordinates from string '%s': %f, %f", input, lat, lng)
+				return lng, lat // Return longitude first, latitude second to match function signature
+			}
+		}
+		log.Printf("Failed to parse coordinates from string '%s': lat_err=%v, lng_err=%v", input, err1, err2)
+	}
+
 	return 0, 0
 }
