@@ -13,14 +13,13 @@ func splitter(fc gdj.FeatureCollection) gdj.FeatureCollection {
 	//	Loop through all features in the feature collection
 	for _, feature := range fc.Features {
 		// Loop through all coordinates in the feature
-		//log.Println("Feature: ", len(feature.Geometry.Coordinates))
 		lengthOfCoords := len(feature.Geometry.Coordinates)
 		for i := 0; i < lengthOfCoords-1; i++ {
 			coord1 := feature.Geometry.Coordinates[i]
 			coord2 := feature.Geometry.Coordinates[i+1]
 
-			// Create a new feature with the first and next coordinate and append it to the new feature collection
 			newFeature := gdj.Feature{
+				Type: "Feature",
 				Geometry: gdj.Geometry{
 					Type:        "LineString",
 					Coordinates: []gdj.Position{coord1, coord2},
@@ -30,6 +29,5 @@ func splitter(fc gdj.FeatureCollection) gdj.FeatureCollection {
 
 		}
 	}
-	writeOutput(newFc, "dataset/splitCoords.geojson")
 	return newFc
 }

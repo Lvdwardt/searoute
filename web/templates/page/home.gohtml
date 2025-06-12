@@ -1,40 +1,38 @@
 {{template "top" .}}
 
 <div class="container form">
-    <form>
-        <div class="row">
-            <div class="col-md-4">
-                <div class="input-field">
-                    <input id="from-input" type="text" name="from-input" autocomplete="off">
-                    <label for="from-input">From</label>
-                    <div class="from-autocomplete-items autocomplete-items"></div>
-                </div>
+    <!-- Multi-Route Planning -->
+    <div class="row">
+        <div class="col-md-12">
+            <h3>Multi-Route Sea Route Calculator</h3>
+            <p>This is a simple debugging interface for testing multi-route calculations through multiple waypoints.</p>
+            
+            <div class="input-field">
+                <textarea id="coordinates-input" placeholder='Enter coordinates in JSON format:
+[
+  { "lon": 12.599, "lat": 55.682 },
+  { "lon": 12.09, "lat": 54.182 },
+  { "lon": 10.221, "lat": 56.157 }
+]' style="height: 150px; resize: vertical; width: 100%;"></textarea>
+                <label for="coordinates-input">Coordinates (JSON Format)</label>
             </div>
-            <div class="col-md-4">
-                <div class="input-field">
-                    <input id="to-input" type="text" name="to-input" autocomplete="off">
-                    <label for="to-input">To</label>
-                    <div class="to-autocomplete-items autocomplete-items"></div>
-                </div>
+            
+            <div class="input-field">
+                <button class="btn waves-effect waves-light blue text-light" type="button" id="calculate-multi-route">Calculate Multi-Route</button>
+                <button class="btn waves-effect waves-light grey text-light" type="button" id="clear-button" style="margin-left: 10px;">Clear Map</button>
             </div>
-            <div class="col-md-2">
-                <div class="input-field">
-                    <button class="btn waves-effect waves-light blue text-light" type="submit">Calculate</button>
-                </div>
+            
+            <div id="result-info" style="margin-top: 20px; display: none;">
+                <h5>Route Information</h5>
+                <p><strong>Total Distance:</strong> <span id="total-distance"></span> km</p>
+                <p><strong>Number of Segments:</strong> <span id="route-count"></span></p>
             </div>
         </div>
-    </form>
-
-
+    </div>
 </div>
 
-
-<button type="button" class="btn wave-effect blue btn-floating btn-circle" id="download-button" disabled>
+<button type="button" class="btn wave-effect blue btn-floating btn-circle" id="download-button" disabled style="display: none;">
     <i class="fa fa-download"></i>
-</button>
-
-<button type="button" class="btn wave-effect blue btn-floating btn-circle" id="clear-button">
-    <i class="fa fa-times"></i>
 </button>
 
 {{/*Map Box*/}}

@@ -16,11 +16,11 @@ html, body {
 
 #map {
     /* set the height of the map to 100% of the available space */
-    height: 90%;
+    height: 50%;
     width: 100%;
     /* position the map at the bottom of the page */
     position: fixed;
-    margin-top: 10px;
+    margin-top: 400px;
     z-index: 0;
 }
 
