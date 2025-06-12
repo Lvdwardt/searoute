@@ -3,23 +3,42 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"math"
+	"os"
+
 	"github.com/gin-gonic/gin"
 	geo "github.com/kellydunn/golang-geo"
 	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
-	"io"
-	"log"
-	"os"
-	"strings"
+	"github.com/joho/godotenv"
 )
 
-var PortData []Port
+type Coordinate struct {
+	Lon float64 `json:"lon"`
+	Lat float64 `json:"lat"`
+}
+
+type MultiRouteRequest struct {
+	Coordinates []Coordinate `json:"coordinates"`
+}
+
+type MultiRouteResponse struct {
+	Type     string `json:"type"`
+	Geometry struct {
+		Type        string          `json:"type"`
+		Coordinates interface{}     `json:"coordinates"`
+	} `json:"geometry"`
+	Properties struct {
+		TotalDistance float64 `json:"total_distance"`
+		RouteCount    int     `json:"route_count"`
+	} `json:"properties"`
+}
 
 func main() {
-	skipNowTemp := false
-	if skipNowTemp {
-		navWarn := GetNavWarnings()
-
-		SaveNavWarnings(navWarn)
+	err := godotenv.Load()
+	if err != nil {
+		log.Printf("Error loading .env file: %v", err)
 	}
 
 	// Create a temp folder
@@ -46,12 +65,6 @@ func main() {
 	wrt := io.MultiWriter(os.Stdout, f)
 	log.SetOutput(wrt)
 
-	// Load the port data
-	PortData, err = LoadPorts()
-	if err != nil {
-		log.Printf("Error loading port data: %v", err)
-	}
-
 	// Set the router as the default one provided by Gin
 	router := gin.Default()
 
@@ -65,75 +78,32 @@ func main() {
 	// Load the static files
 	router.Static("/static", "./web/static")
 
-	// Setup route group for the API
-	// Handle the index route
+	// Simple debugging interface
 	router.GET("/", func(c *gin.Context) {
-
 		c.HTML(200, "home.gohtml", gin.H{})
 	})
 
-	// Handle the about page
-	router.GET("/about", func(c *gin.Context) {
-		c.HTML(200, "about.gohtml", gin.H{})
-	})
-
-	// Handle the search for ports
-	router.GET("/ports", func(c *gin.Context) {
-		// Get the search query
-		searchQuery := c.Query("search")
-		// Get the filtered port data
-		filteredPorts := filterPorts(searchQuery)
-		// Send the filtered port data to the client
-		c.JSON(200, filteredPorts)
-	})
-
-	// Handle request to calculate the passage
-	router.POST("/waypoints", func(c *gin.Context) {
-
-		var form map[string]string
-		if err := c.Bind(&form); err != nil {
-			// Handle error
-			log.Println(err)
+	// Handle request to calculate routes for multiple coordinates
+	router.POST("/multi-routes", func(c *gin.Context) {
+		var request MultiRouteRequest
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(400, gin.H{"error": "Invalid JSON format: " + err.Error()})
+			return
 		}
 
-		log.Println(form)
+		if len(request.Coordinates) < 2 {
+			c.JSON(400, gin.H{"error": "At least 2 coordinates are required"})
+			return
+		}
 
-		//originLongi := form["originLongitude"]
-		//originLati := form["originLatitude"]
-		//destinationLongi := form["destinationLongitude"]
-		//destinationLati := form["destinationLatitude"]
+		// Calculate the complete route through all coordinates
+		response, err := calculateMultiRoute(request.Coordinates)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to calculate route: " + err.Error()})
+			return
+		}
 
-		fromPort := form["fromPort"]
-		toPort := form["toPort"]
-
-		// Get the origin coordinates
-		originLong, originLat := getPortCoordinates(fromPort)
-		// Get the destination coordinates
-		destinationLong, destinationLat := getPortCoordinates(toPort)
-
-		// Convert all the waypoints to float64
-		//originLong, _ := strconv.ParseFloat(originLong, 64)
-		//originLat, _ := strconv.ParseFloat(originLati, 64)
-		//destinationLong, _ := strconv.ParseFloat(destinationLongi, 64)
-		//destinationLat, _ := strconv.ParseFloat(destinationLati, 64)
-
-		// Print the coordinates received from form
-		log.Printf("Origin: %f, %f", originLong, originLat)
-		log.Printf("Destination: %f, %f", destinationLong, destinationLat)
-
-		// Get the origin coordinates
-		originCoords := gdj.Position{originLong, originLat}
-		// Get the destination coordinates
-		destinationCoords := gdj.Position{destinationLong, destinationLat}
-		// Set route name
-		routeName := fmt.Sprintf("%s -> %s", fromPort, toPort)
-
-		// Call the function to calculate the passage
-		data := calculatePassageInfo(originCoords, destinationCoords, routeName)
-
-		// Send the data to the client
-		c.JSON(200, data)
-
+		c.JSON(200, response)
 	})
 
 	//Start and run the server if production environment
@@ -147,88 +117,260 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-
-	// Sample data for test Shanghai-New-York
-	//var originCoords = gdj.Position{72.9301, 19.0519}
-	//var destinationCoords = gdj.Position{-9.0905, 38.7062}
-	//var routeName = "Mumbai-Lisbon"
-
-	// Calculate the passage info
-	//calculatePassageInfo(originCoords, destinationCoords, routeName)
-
 }
 
-// CalculatePassageInfo calculates the ocean waypoints and distance between two coordinates and generates a GeoJSON output
-func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeName string) Output {
-	// FC variable is the GeoJSON FeatureCollection
-	var fc gdj.FeatureCollection
-	var newFc gdj.FeatureCollection
-	var data []byte
-	var splitAvailable bool
-	// Check if splitCoords.geojson exists
-	if _, err := os.Stat("dataset/splitCoords.geojson"); os.IsNotExist(err) {
-		// If not, read the original file
-		log.Println("splitCoords.geojson does not exist. Reading original file.")
-		data, err = os.ReadFile("dataset/marnet_densified_v2.geojson")
-		if err != nil {
-			log.Fatal(err)
+// normalizeLongitude normalizes longitude to handle dateline crossing
+func normalizeLongitude(lon float64) float64 {
+	for lon > 180 {
+		lon -= 360
+	}
+	for lon < -180 {
+		lon += 360
+	}
+	return lon
+}
+
+// adjustCoordinatesForDateline adjusts coordinates to minimize distance across dateline
+func adjustCoordinatesForDateline(origin, destination gdj.Position) (gdj.Position, gdj.Position) {
+	origLon := origin[0]
+	destLon := destination[0]
+	
+	// Calculate the direct difference
+	directDiff := destLon - origLon
+	
+	// If the difference is greater than 180, it's shorter to go the other way
+	if directDiff > 180 {
+		// Destination is too far east, adjust it west
+		destLon -= 360
+	} else if directDiff < -180 {
+		// Destination is too far west, adjust it east
+		destLon += 360
+	}
+	
+	return gdj.Position{origLon, origin[1]}, gdj.Position{destLon, destination[1]}
+}
+
+// splitCoordinatesAtDateline splits coordinates into separate line segments at dateline crossings
+func splitCoordinatesAtDateline(coordinates [][]float64) [][][]float64 {
+	if len(coordinates) < 2 {
+		return [][][]float64{coordinates}
+	}
+	
+	var segments [][][]float64
+	var currentSegment [][]float64
+	
+	// Add first coordinate
+	currentSegment = append(currentSegment, coordinates[0])
+	
+	for i := 1; i < len(coordinates); i++ {
+		prevLon := coordinates[i-1][0]
+		currLon := coordinates[i][0]
+		
+		// Check if this segment crosses the dateline
+		lonDiff := currLon - prevLon
+		
+		// Debug logging for suspicious longitude differences
+		if lonDiff > 100 || lonDiff < -100 {
+			log.Printf("Large longitude difference detected: %.3f -> %.3f (diff: %.3f)", prevLon, currLon, lonDiff)
 		}
-	} else {
-		// If it does, read the splitCoords.geojson file
-		splitAvailable = true
-		log.Println("splitCoords.geojson exists. Reading splitCoords.geojson file.")
-		data, err = os.ReadFile("dataset/splitCoords.geojson")
-		if err != nil {
-			log.Fatal(err)
+		
+		// Check for exact dateline transitions
+		isDatelineCrossing := (prevLon == 180 && currLon == -180) || (prevLon == -180 && currLon == 180)
+		
+		// Also check for the specific case of 180 to -180 transition
+		if lonDiff > 180 || lonDiff < -180 || isDatelineCrossing {
+			// This is a dateline crossing - end current segment and start new one
+			log.Printf("Detected dateline crossing between points %d and %d (%.3f -> %.3f)", i-1, i, prevLon, currLon)
+			
+			// Finish current segment
+			if len(currentSegment) > 1 {
+				segments = append(segments, currentSegment)
+			}
+			
+			// Start new segment with current coordinate
+			currentSegment = [][]float64{coordinates[i]}
+		} else {
+			// Normal segment - add coordinate
+			currentSegment = append(currentSegment, coordinates[i])
 		}
 	}
+	
+	// Add final segment if it has coordinates
+	if len(currentSegment) > 1 {
+		segments = append(segments, currentSegment)
+	}
+	
+	log.Printf("Split route into %d segments", len(segments))
+	return segments
+}
 
-	//Unmarshall feature collection from geojson
-	err := json.Unmarshal(data, &fc)
+// calculateMultiRoute calculates routes between all consecutive coordinate pairs and returns a single linestring
+func calculateMultiRoute(coordinates []Coordinate) (MultiRouteResponse, error) {
+	var response MultiRouteResponse
+	var allCoordinates [][]float64
+	var totalDistance float64
+
+	log.Println("Loading GeoJSON data...")
+
+	// Define split file path
+	splitFilePath := "dataset/splitCoords.geojson"
+	
+	// Check if split file exists, if not create it
+	if _, err := os.Stat(splitFilePath); os.IsNotExist(err) {
+		log.Println("Split file does not exist. Creating split coordinates file...")
+		
+		// Read original file
+		originalData, err := os.ReadFile("dataset/searoutes-v1.geojson")
+		if err != nil {
+			return response, fmt.Errorf("failed to read original geojson file: %v", err)
+		}
+
+		// Unmarshal original feature collection
+		var originalFc gdj.FeatureCollection
+		err = json.Unmarshal(originalData, &originalFc)
+		if err != nil {
+			return response, fmt.Errorf("failed to unmarshal original geojson: %v", err)
+		}
+
+		// Split the coordinates
+		splitFc := splitter(originalFc)
+
+		// Save split coordinates to file
+		splitData, err := json.Marshal(splitFc)
+		if err != nil {
+			return response, fmt.Errorf("failed to marshal split coordinates: %v", err)
+		}
+
+		err = os.WriteFile(splitFilePath, splitData, 0644)
+		if err != nil {
+			return response, fmt.Errorf("failed to write split coordinates file: %v", err)
+		}
+
+		log.Println("Split coordinates file created successfully.")
+	} else {
+		log.Println("Split coordinates file exists. Using existing file.")
+	}
+
+	// Always load from split file
+	data, err := os.ReadFile(splitFilePath)
 	if err != nil {
-		log.Fatal(err)
+		return response, fmt.Errorf("failed to read split coordinates file: %v", err)
 	}
 
-	//log.Println("Split file exists: ", splitAvailable)
-	// Do not split if splitCoords.geojson exists
-	if !splitAvailable {
-		newFc = splitter(fc)
+	// Unmarshal feature collection from split geojson
+	var fc gdj.FeatureCollection
+	err = json.Unmarshal(data, &fc)
+	if err != nil {
+		return response, fmt.Errorf("failed to unmarshal split geojson: %v", err)
+	}
+
+	log.Printf("Loaded feature collection with %d features", len(fc.Features))
+
+	// Add first coordinate (normalized)
+	allCoordinates = append(allCoordinates, []float64{normalizeLongitude(coordinates[0].Lon), coordinates[0].Lat})
+
+	// Calculate route between each consecutive pair of coordinates
+	for i := 0; i < len(coordinates)-1; i++ {
+		origin := gdj.Position{normalizeLongitude(coordinates[i].Lon), coordinates[i].Lat}
+		destination := gdj.Position{normalizeLongitude(coordinates[i+1].Lon), coordinates[i+1].Lat}
+
+		log.Printf("Calculating route from %v to %v", origin, destination)
+		log.Printf("Origin longitude: %f, Destination longitude: %f", origin[0], destination[0])
+		
+		// Validate coordinates before processing
+		if !isValidCoordinate(origin) || !isValidCoordinate(destination) {
+			return response, fmt.Errorf("invalid coordinates detected: origin %v, destination %v", origin, destination)
+		}
+		
+		// Check if this crosses the dateline
+		lonDiff := destination[0] - origin[0]
+		crossesDateline := lonDiff > 180 || lonDiff < -180
+		
+		if crossesDateline {
+			log.Printf("WARNING: Route crosses dateline. Longitude difference: %f", lonDiff)
+			// For dateline crossings near the 180/-180 boundary, use direct connection
+			if isNearDateline(origin[0]) || isNearDateline(destination[0]) {
+				log.Printf("DATELINE HANDLING: Using direct connection for coordinates near dateline")
+				// Add destination coordinate directly
+				allCoordinates = append(allCoordinates, []float64{normalizeLongitude(destination[0]), destination[1]})
+				
+				distance := CalcDistance(origin, destination)
+				log.Printf("Direct path created with distance %f meters", distance)
+				
+				distanceInKm := distance / 1000
+				totalDistance += distanceInKm
+				continue
+			}
+			
+			// Adjust coordinates to handle dateline crossing
+			origin, destination = adjustCoordinatesForDateline(origin, destination)
+			log.Printf("Adjusted coordinates - Origin: %v, Destination: %v", origin, destination)
+		}
+
+		// Calculate the shortest path between two points
+		path, distance, err := fc.FindPath(origin, destination, 0.0000000001)
+		if err != nil {
+			log.Printf("ERROR: FindPath failed with error: %v", err)
+			log.Printf("ERROR: Origin coordinates: [%f, %f]", origin[0], origin[1])
+			log.Printf("ERROR: Destination coordinates: [%f, %f]", destination[0], destination[1])
+			
+			// Enhanced fallback for various error scenarios
+			log.Printf("FALLBACK: Using direct line connection")
+			// Add destination coordinate directly for fallback
+			allCoordinates = append(allCoordinates, []float64{normalizeLongitude(destination[0]), destination[1]})
+			distance = CalcDistance(origin, destination)
+			distanceInKm := distance / 1000
+			totalDistance += distanceInKm
+			continue
+		}
+
+		log.Printf("Found path with %d waypoints and distance %f meters", len(path), distance)
+
+		distanceInKm := distance / 1000
+		totalDistance += distanceInKm
+
+		// Add connecting segments to ensure complete route
+		if len(path) > 0 {
+			firstWp := path[len(path)-1] // closest to origin
+			lastWp := path[0]            // closest to destination
+			
+			// Calculate and add distances for connection segments
+			distToFirstWp := CalcDistance(origin, firstWp)
+			distFromLastWp := CalcDistance(lastWp, destination)
+			totalDistance += (distToFirstWp + distFromLastWp) / 1000 // Convert to km
+			
+			// Add waypoints from pathfinding (in reverse order as they come destination to origin)
+			for j := len(path) - 1; j >= 0; j-- {
+				normalizedLon := normalizeLongitude(path[j][0])
+				allCoordinates = append(allCoordinates, []float64{normalizedLon, path[j][1]})
+			}
+		}
+		
+		// Always add the destination port coordinate to ensure we reach the exact port location
+		allCoordinates = append(allCoordinates, []float64{normalizeLongitude(destination[0]), destination[1]})
+	}
+
+	// Split coordinates at dateline crossings
+	log.Printf("Before splitting: checking %d coordinates for dateline crossings", len(allCoordinates))
+	segments := splitCoordinatesAtDateline(allCoordinates)
+	
+	// Build response
+	response.Type = "Feature"
+	if len(segments) == 1 {
+		// Single segment - use LineString
+		response.Geometry.Type = "LineString"
+		response.Geometry.Coordinates = segments[0]
 	} else {
-		newFc = fc
+		// Multiple segments - use MultiLineString
+		response.Geometry.Type = "MultiLineString"
+		response.Geometry.Coordinates = segments
 	}
-	//// Print the number of features in the collection
-	//log.Printf("Number of features: %d", len(fc.Features))
+	response.Properties.TotalDistance = totalDistance
+	response.Properties.RouteCount = len(coordinates) - 1
 
-	// Calculate the shortest path between two points
-	path, distance, err := newFc.FindPath(originCoords, destinationCoords, 0.00001)
+	log.Printf("Multi-route calculation complete. Total distance: %f km, %d route segments, %d geometry segments", totalDistance, len(coordinates)-1, len(segments))
 
-	distanceInKm := distance / 1000
-
-	// Get the first and last coordinates of the path
-	lastWp := path[0]
-	firstWp := path[len(path)-1]
-
-	log.Println("First waypoint: ", firstWp)
-	log.Println("Last waypoint: ", lastWp)
-
-	// Calculate the gc distance between the origin coordinates and the first waypoint
-	distToFirstWp := CalcDistance(originCoords, firstWp)
-	// Calculate gc distance between the destination coordinates and the last waypoint
-	distFromLastWp := CalcDistance(destinationCoords, lastWp)
-	// Total distance of the path
-	totalDistance := distToFirstWp + distanceInKm + distFromLastWp
-
-	// Print the path and distance
-	log.Printf("Waypoints: %v", path)
-	log.Printf("Origin to First Waypoint: %f Km", distToFirstWp)
-	log.Printf("Waypoint Distance: %f Km", distanceInKm)
-	log.Printf("Last Waypoint to Destination: %f Km", distFromLastWp)
-	log.Printf("Total Distance: %f Km", totalDistance)
-
-	//	Generate output geojson
-	output := generateOutput(path, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, distanceInKm, routeName)
-
-	return output
+	return response, nil
 }
 
 // CalcDistance calculates the distance between two points in meters
@@ -239,24 +381,25 @@ func CalcDistance(p1, p2 gdj.Position) float64 {
 	return wp1.GreatCircleDistance(wp2)
 }
 
-// filterPorts filters the ports from the []Port struct
-func filterPorts(query string) []Port {
-	filteredPorts := make([]Port, 0)
-	for _, port := range PortData {
-		// Check if the search query is a substring of the port name or location
-		if strings.Contains(strings.ToLower(port.Port), strings.ToLower(query)) || strings.Contains(strings.ToLower(port.Country), strings.ToLower(query)) {
-			filteredPorts = append(filteredPorts, port)
-		}
+// isValidCoordinate checks if a coordinate is valid
+func isValidCoordinate(pos gdj.Position) bool {
+	if len(pos) < 2 {
+		return false
 	}
-	return filteredPorts
+	lon := pos[0]
+	lat := pos[1]
+	
+	// Check for NaN or infinite values
+	if math.IsNaN(lon) || math.IsInf(lon, 0) || math.IsNaN(lat) || math.IsInf(lat, 0) {
+		return false
+	}
+	
+	// Check coordinate bounds
+	return lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90
 }
 
-// getPortCoordinates returns the coordinates of a port
-func getPortCoordinates(portName string) (float64, float64) {
-	for _, port := range PortData {
-		if port.Port == portName {
-			return port.Longitude, port.Latitude
-		}
-	}
-	return 0, 0
+// isNearDateline checks if a longitude is very close to the International Date Line
+func isNearDateline(lon float64) bool {
+	// Consider coordinates within 5 degrees of the dateline as "near"
+	return lon > 175 || lon < -175
 }
