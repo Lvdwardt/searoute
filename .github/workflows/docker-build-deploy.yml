@@ -65,4 +65,5 @@ jobs:
       run: |
         curl -X POST "${{ secrets.COOLIFY_WEBHOOK_URL }}" \
           -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}" \
           -d '{"ref": "${{ github.ref }}", "sha": "${{ github.sha }}"}' 
